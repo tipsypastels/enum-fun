@@ -25,7 +25,7 @@ pub trait NamePlural: Name {
 /// implementation is used.
 ///
 /// The name of an enum variant is its identifier in Title Case.
-/// `Foo` becomes `"Foo"` and `HelloWorld` becomes `"Hello World`.
+/// `Foo` becomes `"Foo"` and `HelloWorld` becomes `"Hello World"`.
 /// This can be overridden by using the `#[name = "..."]` attribute
 /// on a variant, e.g.:
 ///
@@ -35,12 +35,16 @@ pub trait NamePlural: Name {
 /// #[derive(Name)]
 /// enum Words {
 ///     Foo,
+///     HelloWorld,
 ///     #[name = "Baz"]
 ///     Bar,
 /// }
 ///
-/// assert_eq!(Words::Foo.name(), "Foo");
-/// assert_eq!(Words::Bar.name(), "Baz");
+/// use Words::*;
+///
+/// assert_eq!(Foo.name(), "Foo");
+/// assert_eq!(HelloWorld.name(), "Hello World");
+/// assert_eq!(Bar.name(), "Baz");
 /// ```
 pub use enum_fun_macros::Name;
 
@@ -63,20 +67,24 @@ pub use enum_fun_macros::Name;
 /// #[derive(Name, NamePlural)]
 /// enum Words {
 ///     Foo,
+///     HelloWorld,
 ///     #[name = "Baz"]
 ///     Bar,
 ///     #[name(plural = "Quuxes")]
 ///     Quux,
 /// }
 ///
-/// assert_eq!(Words::Foo.name_plural(), "Foos");
-/// assert_eq!(Words::Bar.name_plural(), "Bazs");
-/// assert_eq!(Words::Quux.name_plural(), "Quuxes");
+/// use Words::*;
+///
+/// assert_eq!(Foo.name_plural(), "Foos");
+/// assert_eq!(HelloWorld.name_plural(), "Hello Worlds");
+/// assert_eq!(Bar.name_plural(), "Bazs");
+/// assert_eq!(Quux.name_plural(), "Quuxes");
 /// ```
 ///
-/// A utility function `name_pluralized(&self, usize) -> &'static str`
-/// is also generated. It will return `name()` if the given
-/// value is `1`, and `name_plural()` otherwise. It does not
+/// A utility method `name_pluralized(&self, n: usize) -> &'static str`
+/// is also generated. It will return `name()` if `n`
+/// is `1`, and `name_plural()` otherwise. It does not
 /// prepend the provided number to the string.
 ///
 /// ```rust
@@ -85,8 +93,9 @@ pub use enum_fun_macros::Name;
 /// # enum Words {
 /// #     Foo,
 /// # }
-/// assert_eq!(Words::Foo.name_pluralized(1), "Foo");
-/// assert_eq!(Words::Foo.name_pluralized(2), "Foos");
+/// # use Words::Foo;
+/// assert_eq!(Foo.name_pluralized(1), "Foo");
+/// assert_eq!(Foo.name_pluralized(/* anything non-1 */ 2), "Foos");
 /// ```
 ///
 /// If the `name-includes-plural` feature is enabled,
