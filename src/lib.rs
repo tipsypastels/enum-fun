@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 #[cfg(feature = "name-trait")]
 pub trait Name {
     fn name(&self) -> &'static str;
