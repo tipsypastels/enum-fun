@@ -10,8 +10,8 @@ license = "MIT"
 proc-macro = true
 
 [features]
-name_trait = []
-name_includes_plural = []
+name-trait = []
+name-includes-plural = []
 
 [dependencies]
 heck = "0.5.0"

@@ -10,17 +10,17 @@ pub fn name(item: ItemEnum) -> TokenStream {
     let (vis, ident, variants) = (&item.vis, &item.ident, &item.variants);
 
     let mut match_arms = Vec::with_capacity(variants.len());
-    #[cfg(feature = "name_includes_plural")]
+    #[cfg(feature = "name-includes-plural")]
     let mut match_arms_plural = Vec::with_capacity(variants.len());
 
     for variant in variants {
         let ident = &variant.ident;
-        let (name, _name_plural) = find(variant, cfg!(feature = "name_includes_plural"));
-        #[cfg(feature = "name_includes_plural")]
+        let (name, _name_plural) = find(variant, cfg!(feature = "name-includes-plural"));
+        #[cfg(feature = "name-includes-plural")]
         let name_plural = _name_plural.unwrap();
 
         match_arms.push(quote! { Self::#ident => #name });
-        #[cfg(feature = "name_includes_plural")]
+        #[cfg(feature = "name-includes-plural")]
         match_arms_plural.push(quote! { Self::#ident => #name_plural });
     }
 
@@ -35,7 +35,7 @@ pub fn name(item: ItemEnum) -> TokenStream {
         }
     };
 
-    #[cfg(feature = "name_includes_plural")]
+    #[cfg(feature = "name-includes-plural")]
     let body = {
         let plural_methods = name_plural_methods(&vis, &match_arms_plural);
         quote! {
@@ -44,11 +44,11 @@ pub fn name(item: ItemEnum) -> TokenStream {
         }
     };
 
-    #[cfg(not(feature = "name_includes_plural"))]
+    #[cfg(not(feature = "name-includes-plural"))]
     let body = name_method;
 
     let impl_block = ImplBlock {
-        #[cfg(feature = "name_trait")]
+        #[cfg(feature = "name-trait")]
         trait_name: "Name",
         enum_ident: ident,
         body,
@@ -57,7 +57,7 @@ pub fn name(item: ItemEnum) -> TokenStream {
     quote! { #impl_block }
 }
 
-#[cfg(not(feature = "name_includes_plural"))]
+#[cfg(not(feature = "name-includes-plural"))]
 pub fn name_plural(item: ItemEnum) -> TokenStream {
     let (vis, ident, variants) = (&item.vis, &item.ident, &item.variants);
 
@@ -74,7 +74,7 @@ pub fn name_plural(item: ItemEnum) -> TokenStream {
     let vis = ImplVis(vis);
     let body = name_plural_methods(&vis, &match_arms);
     let impl_block = ImplBlock {
-        #[cfg(feature = "name_trait")]
+        #[cfg(feature = "name-trait")]
         trait_name: "NamePlural",
         enum_ident: ident,
         body,
@@ -152,7 +152,7 @@ fn name_plural_methods(vis: &ImplVis, match_arms: &[TokenStream]) -> TokenStream
 }
 
 struct ImplBlock<'a, T> {
-    #[cfg(feature = "name_trait")]
+    #[cfg(feature = "name-trait")]
     trait_name: &'static str,
     enum_ident: &'a Ident,
     body: T,
@@ -161,18 +161,18 @@ struct ImplBlock<'a, T> {
 impl<T: ToTokens> ToTokens for ImplBlock<'_, T> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self {
-            #[cfg(feature = "name_trait")]
+            #[cfg(feature = "name-trait")]
             trait_name,
             enum_ident,
             body,
         } = self;
 
-        #[cfg(feature = "name_trait")]
+        #[cfg(feature = "name-trait")]
         {
             let trait_ident = Ident::new(trait_name, proc_macro2::Span::call_site());
-            quote! { impl #trait_ident for #enum_ident { #body } }.to_tokens(tokens)
+            quote! { impl ::enum_fun::#trait_ident for #enum_ident { #body } }.to_tokens(tokens)
         }
-        #[cfg(not(feature = "name_trait"))]
+        #[cfg(not(feature = "name-trait"))]
         {
             quote! { impl #enum_ident { #body } }.to_tokens(tokens);
         }
@@ -184,7 +184,7 @@ struct ImplVis<'a>(&'a Visibility);
 impl ToTokens for ImplVis<'_> {
     fn to_tokens(&self, _tokens: &mut TokenStream) {
         let _vis = self.0;
-        #[cfg(not(feature = "name_trait"))]
+        #[cfg(not(feature = "name-trait"))]
         quote! { #_vis }.to_tokens(_tokens)
     }
 }
@@ -193,7 +193,7 @@ struct ImplConstness;
 
 impl ToTokens for ImplConstness {
     fn to_tokens(&self, _tokens: &mut TokenStream) {
-        #[cfg(not(feature = "name_trait"))]
+        #[cfg(not(feature = "name-trait"))]
         quote! { const }.to_tokens(_tokens)
     }
 }

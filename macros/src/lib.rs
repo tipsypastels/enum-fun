@@ -9,7 +9,7 @@ pub fn name(input: TokenStream) -> TokenStream {
     name::name(parse_macro_input!(input as ItemEnum)).into()
 }
 
-#[cfg(not(feature = "name_includes_plural"))]
+#[cfg(not(feature = "name-includes-plural"))]
 #[proc_macro_derive(NamePlural)]
 pub fn name_plural(input: TokenStream) -> TokenStream {
     name::name_plural(parse_macro_input!(input as ItemEnum)).into()
