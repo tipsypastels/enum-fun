@@ -3,6 +3,7 @@ name = "enum-fun"
 version = "0.1.0"
 edition = "2024"
 description = "Silly enum helpers."
+repository = "https://github.com/tipsypastels/enum-fun"
 license = "MIT"
 
 [workspace]

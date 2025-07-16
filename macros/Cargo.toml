@@ -3,6 +3,7 @@ name = "enum-fun-macros"
 version = "0.1.0"
 edition = "2024"
 description = "Helper for enum-fun crate."
+repository = "https://github.com/tipsypastels/enum-fun"
 license = "MIT"
 
 [lib]
