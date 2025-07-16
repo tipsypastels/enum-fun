@@ -1,0 +1,14 @@
+[package]
+name = "enum-fun"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = [".", "./macros"]
+
+[features]
+name_trait = ["enum-fun-macros/name_trait"]
+name_includes_plural = ["enum-fun-macros/name_includes_plural"]
+
+[dependencies]
+enum-fun-macros = { path = "./macros" }
