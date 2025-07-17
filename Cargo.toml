@@ -1,6 +1,6 @@
 [package]
 name = "enum-fun"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "Silly enum helpers."
 repository = "https://github.com/tipsypastels/enum-fun"
@@ -14,4 +14,4 @@ name-trait = ["enum-fun-macros/name-trait"]
 name-includes-plural = ["enum-fun-macros/name-includes-plural"]
 
 [dependencies]
-enum-fun-macros = { version = "0.1.4", path = "./macros" }
+enum-fun-macros = { version = "0.1.5", path = "./macros" }

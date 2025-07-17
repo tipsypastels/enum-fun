@@ -1,4 +1,5 @@
 mod name;
+mod predicates;
 mod variants;
 
 use proc_macro::TokenStream;
@@ -13,6 +14,11 @@ pub fn name(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(NamePlural)]
 pub fn name_plural(input: TokenStream) -> TokenStream {
     name::name_plural(parse_macro_input!(input as ItemEnum)).into()
+}
+
+#[proc_macro_derive(Predicates)]
+pub fn predicates(input: TokenStream) -> TokenStream {
+    predicates::predicates(parse_macro_input!(input as ItemEnum)).into()
 }
 
 #[proc_macro_derive(Variants)]
