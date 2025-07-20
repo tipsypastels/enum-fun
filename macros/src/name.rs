@@ -1,199 +1,337 @@
 use heck::ToTitleCase;
-use proc_macro2::TokenStream;
-use quote::{ToTokens, quote};
+use proc_macro2::{Span, TokenStream};
+use quote::quote;
+use std::{borrow::Cow, collections::HashMap, iter};
 use syn::{
-    Expr, ExprLit, Ident, ItemEnum, Lit, LitStr, Result, Variant, Visibility,
+    Attribute, Error, Ident, ItemEnum, LitStr, Result, Token, parenthesized,
     parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+    spanned::Spanned,
 };
 
-pub fn name(item: ItemEnum) -> TokenStream {
-    let (vis, ident, variants) = (&item.vis, &item.ident, &item.variants);
-
-    let mut match_arms = Vec::with_capacity(variants.len());
-    #[cfg(feature = "name-includes-plural")]
-    let mut match_arms_plural = Vec::with_capacity(variants.len());
+pub fn name(item: ItemEnum) -> Result<TokenStream> {
+    let (vis, attrs, ident, variants) = (&item.vis, &item.attrs, &item.ident, &item.variants);
+    let formats = Formats::new(item.span(), attrs)?;
+    let mut arms = HashMap::<&str, Vec<TokenStream>>::new();
 
     for variant in variants {
-        let ident = &variant.ident;
-        let (name, _name_plural) = find(variant, cfg!(feature = "name-includes-plural"));
-        #[cfg(feature = "name-includes-plural")]
-        let name_plural = _name_plural.unwrap();
+        let variant_ident = &variant.ident;
+        let overrides = Overrides::new(&formats, &variant.attrs)?;
 
-        match_arms.push(quote! { Self::#ident => #name });
-        #[cfg(feature = "name-includes-plural")]
-        match_arms_plural.push(quote! { Self::#ident => #name_plural });
-    }
+        for (key, format) in formats.iter() {
+            let value = overrides
+                .get(key)
+                .map(Cow::Borrowed)
+                .or_else(|| {
+                    (key != "base")
+                        .then(|| {
+                            overrides
+                                .get("base")
+                                .map(|s| Cow::Owned(format.transform(s)))
+                        })
+                        .flatten()
+                })
+                .unwrap_or_else(|| Cow::Owned(format.transform(&variant_ident.to_string())));
 
-    let vis = ImplVis(vis);
-    let constness = ImplConstness;
-
-    let name_method = quote! {
-        #vis #constness fn name(&self) -> &'static str {
-            match self {
-                #(#match_arms),*
-            }
+            arms.entry(key)
+                .and_modify(|v| v.push(quote! { Self::#variant_ident => #value }))
+                .or_insert_with(|| vec![quote! { Self::#variant_ident => #value }]);
         }
-    };
-
-    #[cfg(feature = "name-includes-plural")]
-    let body = {
-        let plural_methods = name_plural_methods(&vis, &match_arms_plural);
-        quote! {
-            #name_method
-            #plural_methods
-        }
-    };
-
-    #[cfg(not(feature = "name-includes-plural"))]
-    let body = name_method;
-
-    let impl_block = ImplBlock {
-        #[cfg(feature = "name-trait")]
-        trait_name: "Name",
-        enum_ident: ident,
-        body,
-    };
-
-    quote! { #impl_block }
-}
-
-#[cfg(not(feature = "name-includes-plural"))]
-pub fn name_plural(item: ItemEnum) -> TokenStream {
-    let (vis, ident, variants) = (&item.vis, &item.ident, &item.variants);
-
-    let mut match_arms = Vec::with_capacity(variants.len());
-
-    for variant in variants {
-        let ident = &variant.ident;
-        let (_, name_plural) = find(variant, true);
-        let name_plural = name_plural.unwrap();
-
-        match_arms.push(quote! { Self::#ident => #name_plural });
     }
 
-    let vis = ImplVis(vis);
-    let body = name_plural_methods(&vis, &match_arms);
-    let impl_block = ImplBlock {
-        #[cfg(feature = "name-trait")]
-        trait_name: "NamePlural",
-        enum_ident: ident,
-        body,
-    };
+    let mut body = Vec::new();
 
-    quote! { #impl_block }
-}
+    for (&key, variant_arms) in &arms {
+        let method_name = method_name_for_key(key);
+        let method_ident = Ident::new(&method_name, Span::call_site());
 
-fn find(variant: &Variant, needs_plural: bool) -> (String, Option<String>) {
-    let name = variant
-        .attrs
-        .iter()
-        .find_map(|attr| {
-            let meta = attr.meta.require_name_value().ok()?;
-            if !meta.path.is_ident("name") {
-                return None;
-            }
-            match &meta.value {
-                Expr::Lit(ExprLit {
-                    lit: Lit::Str(s), ..
-                }) => Some(s.value()),
-                _ => None,
-            }
-        })
-        .unwrap_or_else(|| variant.ident.to_string().to_title_case());
-
-    if !needs_plural {
-        return (name, None);
-    }
-
-    let name_plural = variant
-        .attrs
-        .iter()
-        .find_map(|attr| {
-            let meta = attr.meta.require_list().ok()?;
-            if !meta.path.is_ident("name") {
-                return None;
-            }
-            struct Inner(String);
-            impl Parse for Inner {
-                fn parse(input: ParseStream) -> Result<Self> {
-                    syn::custom_keyword!(plural);
-
-                    let _: plural = input.parse()?;
-                    let _: syn::Token![=] = input.parse()?;
-                    let s: LitStr = input.parse()?;
-                    Ok(Self(s.value()))
+        body.push(quote! {
+            #vis const fn #method_ident(&self) -> &'static str {
+                match self {
+                    #(#variant_arms),*
                 }
             }
-            meta.parse_args::<Inner>().ok().map(|i| i.0)
-        })
-        .unwrap_or_else(|| {
-            let mut n = name.clone();
-            n.push('s');
-            n
         });
+    }
 
-    (name, Some(name_plural))
+    for (singular, plural) in &formats.pluralizers {
+        let singular_method_name = method_name_for_key(singular);
+        let plural_method_name = method_name_for_key(plural);
+        let method_name = pluralizer_method_name_for_key(singular);
+
+        let singular_method_ident = Ident::new(&singular_method_name, Span::call_site());
+        let plural_method_ident = Ident::new(&plural_method_name, Span::call_site());
+        let method_ident = Ident::new(&method_name, Span::call_site());
+
+        body.push(quote! {
+            #vis const fn #method_ident(&self, n: usize) -> &'static str {
+                if n == 1 {
+                    self.#singular_method_ident()
+                } else {
+                    self.#plural_method_ident()
+                }
+            }
+        })
+    }
+
+    Ok(quote! {
+        impl #ident {
+            #(#body)*
+        }
+    })
 }
 
-fn name_plural_methods(vis: &ImplVis, match_arms: &[TokenStream]) -> TokenStream {
-    let constness = ImplConstness;
+struct Formats {
+    base: Format,
+    extras: HashMap<String, Format>,
+    pluralizers: Vec<(String, String)>,
+}
 
-    quote! {
-        #vis #constness fn name_plural(&self) -> &'static str {
-            match self {
-                #(#match_arms),*
+impl Formats {
+    fn new(span: Span, attrs: &[Attribute]) -> Result<Self> {
+        let mut base = None;
+        let mut extras = HashMap::new();
+        let mut pluralizers = Vec::new();
+
+        for attr in attrs {
+            if !attr.path().is_ident("name") {
+                continue;
+            }
+
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("base") {
+                    let value = meta.value()?;
+                    let format = value.parse()?;
+
+                    base = Some(format);
+                    return Ok(());
+                }
+
+                if meta.path.is_ident("extra") {
+                    return meta.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("base") {
+                            return Err(Error::new(meta.path.span(), "invalid extra key `base`"));
+                        }
+
+                        let key = meta
+                            .path
+                            .get_ident()
+                            .ok_or_else(|| Error::new(meta.path.span(), "expected ident"))?
+                            .to_string();
+
+                        let value = meta.value()?;
+                        let format = value.parse()?;
+
+                        extras.insert(key, format);
+                        Ok(())
+                    });
+                }
+
+                if meta.path.is_ident("pluralizer") {
+                    struct IdentPair(Ident, Ident);
+                    impl Parse for IdentPair {
+                        fn parse(input: ParseStream) -> Result<Self> {
+                            let a = input.parse()?;
+                            let _: Token![,] = input.parse()?;
+                            let b = input.parse()?;
+                            Ok(Self(a, b))
+                        }
+                    }
+
+                    let content;
+                    parenthesized!(content in meta.input);
+                    let idents: IdentPair = content.parse()?;
+                    let keys = (idents.0, idents.1);
+
+                    pluralizers.push(keys);
+                    return Ok(());
+                }
+
+                Err(meta.error("unknown attribute"))
+            })?;
+        }
+
+        let base = base.ok_or_else(|| Error::new(span, "missing `#[name(base = \"...\")]`"))?;
+        let pluralizers = pluralizers
+            .into_iter()
+            .map(|(singular, plural)| {
+                let singular_s = singular.to_string();
+                let plural_s = plural.to_string();
+
+                for (ident, str) in [(singular, &singular_s), (plural, &plural_s)] {
+                    if str == "base" {
+                        continue;
+                    }
+                    if !extras.contains_key(str) {
+                        return Err(Error::new(ident.span(), format!("unknown key `{str}`")));
+                    }
+                }
+                Ok((singular_s, plural_s))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            base,
+            extras,
+            pluralizers,
+        })
+    }
+
+    fn has(&self, key: &str) -> bool {
+        key == "base" || self.extras.contains_key(key)
+    }
+
+    fn get(&self, key: &str) -> Format {
+        if key == "base" {
+            self.base
+        } else {
+            self.extras.get(key).copied().unwrap()
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&str, Format)> {
+        iter::once(("base", self.base)).chain(self.extras.iter().map(|(k, v)| (k.as_str(), *v)))
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Format {
+    TitleCase { lower: bool, plural: bool },
+}
+
+impl Format {
+    const VALID_INPUTS: [&str; 4] = [
+        "title case",
+        "title case lower",
+        "title case plural",
+        "title case lower plural",
+    ];
+
+    fn parse_str(span: Span, s: &str) -> Result<Self> {
+        match s {
+            "title case" => Ok(Self::TitleCase {
+                lower: false,
+                plural: false,
+            }),
+            "title case lower" => Ok(Self::TitleCase {
+                lower: true,
+                plural: false,
+            }),
+            "title case plural" => Ok(Self::TitleCase {
+                lower: false,
+                plural: true,
+            }),
+            "title case lower plural" => Ok(Self::TitleCase {
+                lower: true,
+                plural: true,
+            }),
+            _ => Err(Error::new(
+                span,
+                format!(
+                    "expected one of {}",
+                    Self::VALID_INPUTS
+                        .into_iter()
+                        .map(|s| format!("\"{s}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )),
+        }
+    }
+
+    fn transform(&self, s: &str) -> String {
+        match self {
+            Self::TitleCase {
+                lower: false,
+                plural: false,
+            } => s.to_title_case(),
+            Self::TitleCase {
+                lower: true,
+                plural: false,
+            } => s.to_title_case().to_lowercase(),
+            Self::TitleCase {
+                lower: false,
+                plural: true,
+            } => {
+                format!("{}s", s.to_title_case())
+            }
+            Self::TitleCase {
+                lower: true,
+                plural: true,
+            } => {
+                format!("{}s", s.to_title_case().to_lowercase())
+            }
+        }
+    }
+}
+
+impl Parse for Format {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let s: LitStr = input.parse()?;
+        Self::parse_str(s.span(), &s.value())
+    }
+}
+
+struct Overrides {
+    map: HashMap<String, String>,
+}
+
+impl Overrides {
+    fn new(formats: &Formats, attrs: &[Attribute]) -> Result<Self> {
+        let mut map = HashMap::new();
+
+        for attr in attrs {
+            if !attr.path().is_ident("name") {
+                continue;
+            }
+
+            struct Override(Ident, String);
+
+            impl Parse for Override {
+                fn parse(input: ParseStream) -> Result<Self> {
+                    let ident: Ident = input.parse()?;
+                    let _: Token![=] = input.parse()?;
+                    let value: LitStr = input.parse()?;
+
+                    Ok(Self(ident, value.value()))
+                }
+            }
+
+            let parser = Punctuated::<Override, Token![,]>::parse_separated_nonempty;
+            let entries = attr.parse_args_with(parser)?;
+
+            for entry in entries {
+                let Override(ident, value) = entry;
+                let key = ident.to_string();
+
+                if !formats.has(&key) {
+                    return Err(Error::new(ident.span(), format!("unknown key `{key}`")));
+                }
+
+                map.insert(key, value);
             }
         }
 
-        #vis #constness fn name_pluralized(&self, n: usize) -> &'static str {
-            if n == 1 { self.name() } else { self.name_plural() }
-        }
+        Ok(Self { map })
+    }
+
+    fn get(&self, key: &str) -> Option<&str> {
+        self.map.get(key).map(|s| s.as_str())
     }
 }
 
-struct ImplBlock<'a, T> {
-    #[cfg(feature = "name-trait")]
-    trait_name: &'static str,
-    enum_ident: &'a Ident,
-    body: T,
-}
-
-impl<T: ToTokens> ToTokens for ImplBlock<'_, T> {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let Self {
-            #[cfg(feature = "name-trait")]
-            trait_name,
-            enum_ident,
-            body,
-        } = self;
-
-        #[cfg(feature = "name-trait")]
-        {
-            let trait_ident = Ident::new(trait_name, proc_macro2::Span::call_site());
-            quote! { impl ::enum_fun::#trait_ident for #enum_ident { #body } }.to_tokens(tokens)
-        }
-        #[cfg(not(feature = "name-trait"))]
-        {
-            quote! { impl #enum_ident { #body } }.to_tokens(tokens);
-        }
+fn method_name_for_key(key: &str) -> Cow<'static, str> {
+    if key == "base" {
+        Cow::Borrowed("name")
+    } else {
+        Cow::Owned(format!("name_{key}"))
     }
 }
 
-struct ImplVis<'a>(&'a Visibility);
-
-impl ToTokens for ImplVis<'_> {
-    fn to_tokens(&self, _tokens: &mut TokenStream) {
-        let _vis = self.0;
-        #[cfg(not(feature = "name-trait"))]
-        quote! { #_vis }.to_tokens(_tokens)
-    }
-}
-
-struct ImplConstness;
-
-impl ToTokens for ImplConstness {
-    fn to_tokens(&self, _tokens: &mut TokenStream) {
-        #[cfg(not(feature = "name-trait"))]
-        quote! { const }.to_tokens(_tokens)
+fn pluralizer_method_name_for_key(key: &str) -> Cow<'static, str> {
+    if key == "base" {
+        Cow::Borrowed("name_pluralized")
+    } else {
+        Cow::Owned(format!("name_{key}_pluralized"))
     }
 }

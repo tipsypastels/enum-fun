@@ -9,9 +9,5 @@ license = "MIT"
 [workspace]
 members = [".", "./macros"]
 
-[features]
-name-trait = ["enum-fun-macros/name-trait"]
-name-includes-plural = ["enum-fun-macros/name-includes-plural"]
-
 [dependencies]
 enum-fun-macros = { version = "0.1.5", path = "./macros" }
